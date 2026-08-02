@@ -1,0 +1,12 @@
+{
+  "domain": "water_usage",
+  "name": "Water Usage (getMyMeter)",
+  "codeowners": ["@fauxstor"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/fauxstor/water-usage",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/fauxstor/water-usage/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

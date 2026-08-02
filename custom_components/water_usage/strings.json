@@ -1,0 +1,49 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "getMyMeter account",
+        "description": "Enter the same username and password you use at https://getmymeter.info/",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Could not connect to the getMyMeter portal",
+      "portal_changed": "Portal API changed — update the integration or re-run the probe script",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This meter is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Water usage options",
+        "data": {
+          "hourly_threshold": "Hourly usage alert threshold (gallons)",
+          "daily_threshold": "Daily usage alert threshold (gallons)",
+          "scan_interval": "Poll interval (minutes)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "meter_reading": { "name": "Meter reading" },
+      "usage_this_month": { "name": "Usage this month" },
+      "usage_last_month": { "name": "Usage last month" },
+      "usage_today": { "name": "Usage today" },
+      "usage_last_hour": { "name": "Usage last hour" },
+      "usage_yesterday": { "name": "Usage yesterday" }
+    },
+    "binary_sensor": {
+      "hourly_high": { "name": "Hourly usage high" },
+      "daily_high": { "name": "Daily usage high" }
+    }
+  }
+}
