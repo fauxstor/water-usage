@@ -16,6 +16,7 @@ from .const import (
     GWT_PERMUTATION,
     MODULE_PATH,
     TOKENCHECK_POLICY,
+    USAGE_CHART_POLICY,
     UTILITY_POLICY,
     UTILITY_SERVICE,
 )
@@ -97,6 +98,8 @@ class GetMyMeterClient:
         self._customer_id: str | None = None
         self._location_id: str | None = None
         self._meter_id: str | None = None
+        self._ami_channel: int = 1
+        self._meter_number: str = ""
         self._utility: str = ""
         self._customer_name: str = ""
         self._address: str = ""
@@ -274,12 +277,13 @@ class GetMyMeterClient:
             raise WaterUsageApiError(f"Network error talking to portal: {err}") from err
 
     async def async_fetch_usage(self) -> MeterReading:
-        """Fetch latest usage (monthly series + derived sensors)."""
+        """Fetch latest usage (AMI hourly/daily when available + monthly billing)."""
         if not self._token:
             await self.async_login()
 
         monthly: list[UsagePoint] = []
         daily: list[UsagePoint] = []
+        hourly: list[UsagePoint] = []
         unit = "Gallons"
         name = self._customer_name
         address = self._address
@@ -327,16 +331,31 @@ class GetMyMeterClient:
             self._account_number = meta["account"]
             self._customer_id = meta["account"]
 
-        # Optional denser AMI daily series when location is known/configured
-        if self._location_id and self._company_id:
-            daily = await self._fetch_ami_series(
-                company_id=self._company_id,
-                location_id=int(self._location_id),
-                channel=int(self._meter_id or 1)
-                if (self._meter_id or "1").isdigit() and len(self._meter_id or "") < 6
-                else 1,
-                bucket="d",
-            ) or []
+        # Discover AMI location / channel via UsageChartService.getAMIMeters
+        if self._company_id is not None:
+            await self._discover_ami_meter(self._company_id, account)
+
+        if self._location_id and self._company_id is not None:
+            loc = int(self._location_id)
+            channel = self._ami_channel
+            daily = (
+                await self._fetch_ami_series(
+                    company_id=self._company_id,
+                    location_id=loc,
+                    channel=channel,
+                    bucket="d",
+                )
+                or []
+            )
+            hourly = (
+                await self._fetch_ami_series(
+                    company_id=self._company_id,
+                    location_id=loc,
+                    channel=channel,
+                    bucket="r",
+                )
+                or []
+            )
 
         usage_this_month = monthly[-1].gallons if monthly else None
         usage_last_month = monthly[-2].gallons if len(monthly) >= 2 else None
@@ -344,10 +363,13 @@ class GetMyMeterClient:
         usage_today = None
         usage_yesterday = None
         usage_last_hour = None
-        if daily:
+        if hourly:
+            usage_today = self._sum_for_local_day(hourly, 0)
+            usage_yesterday = self._sum_for_local_day(hourly, 1)
+            usage_last_hour = self._last_complete_hour(hourly)
+        elif daily:
             usage_today = self._sum_for_local_day(daily, 0)
             usage_yesterday = self._sum_for_local_day(daily, 1)
-            # Approximate "last hour" unavailable — leave None
         elif usage_this_month is not None:
             # Estimate daily average for threshold helpers when only monthly exists
             now = datetime.now().astimezone()
@@ -355,11 +377,15 @@ class GetMyMeterClient:
             usage_today = round(usage_this_month / day, 2)
 
         reading = None
-        if monthly:
-            # Running sum of monthly usage as a soft cumulative proxy
+        for series in (hourly, daily):
+            if series and series[-1].cumulative is not None:
+                reading = series[-1].cumulative
+                break
+        if reading is None and monthly:
+            # Soft cumulative proxy when AMI cumulative is unavailable
             reading = round(sum(p.gallons for p in monthly), 2)
 
-        meter_id = self._meter_id or self._account_number or "unknown"
+        meter_id = self._meter_id or self._meter_number or self._account_number or "unknown"
         return MeterReading(
             meter_id=str(meter_id),
             customer_id=str(self._customer_id or account),
@@ -376,11 +402,71 @@ class GetMyMeterClient:
             usage_last_hour=usage_last_hour,
             usage_this_month=usage_this_month,
             usage_last_month=usage_last_month,
-            hourly=[],
+            hourly=hourly,
             daily=daily,
             monthly=monthly,
-            raw={"customer_blob_len": len(raw_customer)},
+            raw={
+                "customer_blob_len": len(raw_customer),
+                "ami_channel": self._ami_channel,
+                "meter_number": self._meter_number,
+                "hourly_points": len(hourly),
+                "daily_points": len(daily),
+            },
         )
+
+    async def _discover_ami_meter(self, company_id: int, account: str) -> None:
+        """Call getAMIMeters — response line: loc|channel|meterNum|address|flags…"""
+        if self._location_id:
+            return
+        req = GwtRequest(
+            self._module_base,
+            USAGE_CHART_POLICY,
+            "com.h2oanalytics.widgets.client.UsageChartService",
+            "getAMIMeters",
+        )
+        req.write_int_literal(3)
+        req.write_string_type(_INTEGER)
+        req.write_string_type()
+        req.write_string_type()
+        req.write_integer(company_id)
+        req.write_string_value(account)
+        req.write_int_literal(0)  # null third arg
+        text = await self._gwt_post(req.build())
+        status, body = parse_gwt_response(text)
+        if status != "OK":
+            _LOGGER.debug("getAMIMeters failed: %s", text[:160])
+            return
+        strings = re.findall(r'"((?:\\.|[^"\\])*)"', body)
+        if not strings:
+            return
+        raw = strings[0]
+        try:
+            raw = bytes(raw, "utf-8").decode("unicode_escape")
+        except Exception:  # noqa: BLE001
+            raw = raw.replace("\\n", "\n")
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            parts = line.split("|")
+            if len(parts) < 3:
+                continue
+            loc, channel, meter_num = parts[0], parts[1], parts[2]
+            if not loc.isdigit():
+                continue
+            self._location_id = loc
+            if channel.isdigit():
+                self._ami_channel = int(channel)
+            self._meter_number = meter_num
+            if len(parts) > 3 and parts[3] and not self._address:
+                self._address = parts[3]
+            _LOGGER.debug(
+                "AMI meter discovered loc=%s channel=%s meter=%s",
+                loc,
+                channel,
+                meter_num,
+            )
+            break
 
     async def _get_customer_data(self, company_id: int, account: str) -> str:
         req = GwtRequest(
@@ -526,7 +612,24 @@ class GetMyMeterClient:
             if local.date() == target:
                 total += p.gallons
                 found = True
-        return total if found else None
+        return round(total, 2) if found else None
+
+    @staticmethod
+    def _last_complete_hour(points: list[UsagePoint]) -> float | None:
+        """Return gallons for the most recent completed local hour bucket."""
+        if not points:
+            return None
+        now = datetime.now().astimezone()
+        current_hour = now.replace(minute=0, second=0, microsecond=0)
+        # Walk newest → oldest; skip the in-progress hour if present
+        for p in reversed(points):
+            local = p.start.astimezone(now.tzinfo).replace(
+                minute=0, second=0, microsecond=0
+            )
+            if local >= current_hour:
+                continue
+            return round(p.gallons, 2)
+        return round(points[-1].gallons, 2)
 
     async def async_test_connection(self) -> MeterReading:
         """Login and fetch once — used by config flow."""
@@ -552,6 +655,7 @@ class GetMyMeterClient:
         utility: str | None = None,
         company_id: int | None = None,
         account_number: str | None = None,
+        ami_channel: int | None = None,
     ) -> None:
         """Allow config entry / probe to pin known identifiers."""
         if customer_id:
@@ -569,3 +673,5 @@ class GetMyMeterClient:
             self._utility = utility
         if company_id is not None:
             self._company_id = company_id
+        if ami_channel is not None:
+            self._ami_channel = int(ami_channel)

@@ -54,6 +54,7 @@ class WaterUsageCoordinator(DataUpdateCoordinator[MeterReading]):
         )
         # Optional pinned ids from options / prior discovery
         company = entry.data.get("company_id")
+        channel = entry.data.get("ami_channel")
         self.client.set_ids(
             customer_id=entry.data.get("customer_id"),
             account_number=entry.data.get("account_number"),
@@ -61,6 +62,7 @@ class WaterUsageCoordinator(DataUpdateCoordinator[MeterReading]):
             meter_id=entry.data.get("meter_id"),
             utility=entry.data.get("utility"),
             company_id=int(company) if company not in (None, "") else None,
+            ami_channel=int(channel) if channel not in (None, "") else None,
         )
 
     @property

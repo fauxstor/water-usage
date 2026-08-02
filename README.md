@@ -7,12 +7,12 @@ HACS custom integration that polls [getMyMeter.info](https://getmymeter.info/) (
 ## Features
 
 - Config-flow login with your getMyMeter username & password
-- Sensors (US gallons): this month, last month, estimated today, meter total proxy
+- Sensors (US gallons): meter reading, today, last hour, yesterday, this/last month
 - Binary sensors: hourly / daily usage above configurable thresholds
-- External statistics (`water_usage:meter_*`) for Energy Dashboard archival
+- External statistics (`water_usage:meter_*`) for Energy Dashboard archival (hourly when AMI provides it)
 - Default poll interval: 30 minutes
 
-**Note:** Many utilities only publish **monthly** AMI/billing reads on the portal. When hourly/daily series are unavailable, “today” is estimated as month-to-date ÷ day-of-month, and threshold sensors use that estimate.
+When the portal exposes AMI hourly/daily series (`getAMIMeters` + `/ami_data`), those drive the sensors and statistics. If only monthly billing reads exist, “today” is estimated as month-to-date ÷ day-of-month.
 
 ## Install (HACS)
 

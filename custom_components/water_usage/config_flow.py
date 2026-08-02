@@ -95,6 +95,7 @@ class WaterUsageConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "location_id": reading.location_id
                     or user_input.get("location_id")
                     or "",
+                    "ami_channel": (reading.raw or {}).get("ami_channel", 1),
                     "utility": reading.utility,
                     "company_id": reading.company_id,
                     "customer_name": reading.customer_name,

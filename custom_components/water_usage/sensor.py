@@ -111,4 +111,7 @@ class WaterUsageSensor(CoordinatorEntity[WaterUsageCoordinator], SensorEntity):
         data = self.coordinator.data
         if not data:
             return None
-        return getattr(data, self.entity_description.key, None)
+        key = self.entity_description.key
+        if key == "meter_reading":
+            return data.reading_gallons
+        return getattr(data, key, None)

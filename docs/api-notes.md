@@ -5,7 +5,7 @@ Personal reverse-engineering notes for https://getmymeter.info/
 
 **Do not commit credentials, cookies, or HARs with tokens.**
 
-## Working auth flow (v0.1)
+## Working auth flow
 
 1. `GET /sp?action=start-session&clear=true&cls=cp`
 2. `POST /sp?cls=cp&action=login&locale=en&w=1` with `username`, `password`, `device-uuid`
@@ -14,7 +14,13 @@ Personal reverse-engineering notes for https://getmymeter.info/
 3. `POST /h2o_portal/tokencheck` — `TokenCheckServer(String token, Boolean)`
    - Returns `TrustedSession` with account number, utility name, meter serial, etc.
 4. `POST /h2o_portal/utilityservice` — `getCustomerData(Integer companyId, String accountNumber)`
-   - Returns monthly usage blob (primary data source for Aqua WSC and similar)
+   - Returns monthly usage blob
+5. `POST /h2o_portal/utilityservice` — `UsageChartService.getAMIMeters(Integer, String, String|null)`
+   - Policy: UsageChart (`CC17D706…`); path is still `utilityservice`
+   - Response line: `locationId|channel|meterNumber|address|flags…`
+6. `GET /ami_data?cid=<company>&l=<location>&c=<channel>&b={r|d|m}&df=false&r=0`
+   - Header: `H2O-Token: <token>…</token>`
+   - `b=r` hourly, `b=d` daily, `b=m` monthly
 
 `UtilityService.loginAccount` returns HTTP 500 even with valid credentials — do not use it.
 
@@ -35,22 +41,17 @@ YYYYMM|gal|
 …*<email>*<phone>*…*<ADDRESS>*RESIDENTIAL*…
 ```
 
-## AMI (optional denser series)
+## AMI line format
 
-`GET /ami_data?cid=<company>&l=<location>&c=<channel>&b={r|d|m}&df=false&r=0`
+`epoch_ms|period_gal|cumulative|flag`
 
-Requires `H2O-Token: <token>…</token>` header. Company id for Aqua WSC is `150`. Location ids are utility-scoped and are **not** always the residential account meter — prefer `getCustomerData` for billing usage.
+Example (Aqua WSC): company `150`, location from `getAMIMeters` (not the company id).
 
-Line format: `epoch_ms|period_gal|cumulative|flag`
+## Cadence
 
-## Cadence note
+When `getAMIMeters` + `ami_data&b=r` succeed, the integration archives true hourly intervals into external statistics and populates `usage_last_hour` / `usage_today`. Monthly billing from `getCustomerData` remains available as `usage_this_month` / `usage_last_month`.
 
-Many utilities (including the probed Aqua WSC account) only expose **monthly** billing reads via the portal. The integration:
-
-- Exposes `usage_this_month` / `usage_last_month` as primary sensors
-- Estimates `usage_today` as month-to-date ÷ day-of-month when daily AMI is unavailable
-- Leaves `usage_last_hour` empty unless hourly AMI is present
-- Threshold binary sensors fall back to estimated daily / hourly averages
+If AMI denser series are unavailable for a utility, today is estimated as month-to-date ÷ day-of-month.
 
 ## Re-probe
 
